@@ -97,3 +97,61 @@ output "sqs_queue_url" {
 output "sqs_dlq_url" {
   value = aws_sqs_queue.hello_dlq.id
 }
+
+# IAM role for the consumer Lambda
+resource "aws_iam_role" "consumer_exec" {
+  name = "sqs-consumer-exec"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = "sts:AssumeRole"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+    }]
+  })
+}
+
+# Basic execution permissions (logs)
+resource "aws_iam_role_policy_attachment" "consumer_basic_execution" {
+  role       = aws_iam_role.consumer_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# Permissions to read from SQS
+resource "aws_iam_role_policy" "consumer_sqs" {
+  name = "consumer-sqs"
+  role = aws_iam_role.consumer_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+      ]
+      Resource = aws_sqs_queue.hello_queue.arn
+    }]
+  })
+}
+
+# Lambda function that consumes SQS messages
+resource "aws_lambda_function" "consumer" {
+  function_name = "sqs-consumer"
+  role          = aws_iam_role.consumer_exec.arn
+  handler       = "consumer.handler"
+  runtime       = "nodejs20.x"
+
+  filename         = "consumer.zip"
+  source_code_hash = filebase64sha256("consumer.zip")
+}
+
+# Wire up SQS -> Lambda trigger
+resource "aws_lambda_event_source_mapping" "sqs_trigger" {
+  event_source_arn = aws_sqs_queue.hello_queue.arn
+  function_name    = aws_lambda_function.consumer.arn
+  batch_size       = 10
+}
