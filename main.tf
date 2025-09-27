@@ -147,11 +147,52 @@ resource "aws_lambda_function" "consumer" {
 
   filename         = "consumer.zip"
   source_code_hash = filebase64sha256("consumer.zip")
+  environment {
+    variables = {
+      OPENSEARCH_ENDPOINT = aws_opensearch_domain.demo.endpoint
+    } 
+  }
 }
+
 
 # Wire up SQS -> Lambda trigger
 resource "aws_lambda_event_source_mapping" "sqs_trigger" {
   event_source_arn = aws_sqs_queue.hello_queue.arn
   function_name    = aws_lambda_function.consumer.arn
   batch_size       = 10
+}
+
+
+resource "aws_opensearch_domain" "demo" {
+  domain_name    = "lambda-sqs-demo"
+  engine_version = "OpenSearch_2.11"
+
+  cluster_config {
+    instance_type  = "t3.small.search"
+    instance_count = 1
+  }
+
+  ebs_options {
+    ebs_enabled = true
+    volume_size = 10
+  }
+}
+
+resource "aws_iam_role_policy" "consumer_opensearch" {
+  name = "consumer-opensearch"
+  role = aws_iam_role.consumer_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = [
+          "es:ESHttpPost",
+          "es:ESHttpPut"
+        ]
+        Resource = "${aws_opensearch_domain.demo.arn}/*"
+      }
+    ]
+  })
 }
